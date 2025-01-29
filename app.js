@@ -1,22 +1,52 @@
 const express = require("express");
 const app = express();
 require("dotenv").config();
+const cookieParser = require("cookie-parser");
 const connection = require("./dbConfig");
 const User = require("./models/userSchema");
 const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 const Car = require("./models/carSchema");
 // Middleware to parse JSON bodies
 app.use(express.json());
+app.use(cookieParser());
 connection();
-// Basic route
-app.get("/", (req, res) => {
-  res.send("Welcome to the Car Backend API");
-});
-// Get car details by ID
-app.get("/api/cars/:id", async (req, res) => {
+// Authentication middleware
+const authenticateToken = async (req, res, next) => {
+  const token = req.cookies.token;
+
+  if (!token) {
+    return res.status(401).json({ message: "Access denied. Please login." });
+  }
+
   try {
-    const carId = req.params.id;
-    const car = await Car.findById(carId);
+    const verified = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = verified;
+    next();
+  } catch (error) {
+    res.clearCookie("token");
+    res.status(400).json({ message: "Invalid token" });
+  }
+};
+// Basic route
+app.get("/", authenticateToken, async (req, res) => {
+  try {
+    const userCars = await Car.find({ user: req.user.id });
+    if (!userCars || userCars.length === 0) {
+      return res.status(404).json({ message: "No cars found" });
+    }
+    res.status(200).json(userCars);
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Error fetching cars", error: error.message });
+  }
+});
+
+// Get car details by ID
+app.get("/api/cars/:id", authenticateToken, async (req, res) => {
+  try {
+    const car = await Car.findOne({ _id: req.params.id, user: req.user.id });
 
     if (!car) {
       return res.status(404).json({ message: "Car not found" });
@@ -31,9 +61,12 @@ app.get("/api/cars/:id", async (req, res) => {
 });
 
 // POST endpoint to save car details
-app.post("/api/cars", async (req, res) => {
+app.post("/api/cars", authenticateToken, async (req, res) => {
   try {
-    const newCar = new Car(req.body);
+    const newCar = new Car({
+      ...req.body,
+      user: req.user.id,
+    });
     await newCar.save();
     res.status(201).json({ message: "Car saved successfully", car: newCar });
   } catch (error) {
@@ -44,21 +77,18 @@ app.post("/api/cars", async (req, res) => {
 });
 
 // Update car details by ID
-app.put("/api/cars/:id", async (req, res) => {
+app.put("/api/cars/:id", authenticateToken, async (req, res) => {
   try {
-    const carId = req.params.id;
-    const updates = req.body;
+    const car = await Car.findOne({ _id: req.params.id, user: req.user.id });
 
-    // Find car and update it with new data
-    // {new: true} returns the updated document instead of the old one
-    const updatedCar = await Car.findByIdAndUpdate(carId, updates, {
-      new: true,
-      runValidators: true,//validates the new data
-    });
-
-    if (!updatedCar) {
+    if (!car) {
       return res.status(404).json({ message: "Car not found" });
     }
+
+    const updatedCar = await Car.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
+    });
 
     res.status(200).json({
       message: "Car updated successfully",
@@ -72,9 +102,32 @@ app.put("/api/cars/:id", async (req, res) => {
   }
 });
 
+// Delete car by ID
+app.delete("/api/cars/:id", authenticateToken, async (req, res) => {
+  try {
+    const car = await Car.findOne({ _id: req.params.id, user: req.user.id });
+
+    if (!car) {
+      return res.status(404).json({ message: "Car not found" });
+    }
+
+    await Car.findByIdAndDelete(req.params.id);
+
+    res.status(200).json({
+      message: "Car deleted successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Error deleting car",
+      error: error.message,
+    });
+  }
+});
+
 // Register user
 app.post("/signup", async (req, res) => {
   const { username, password, email } = req.body;
+
   if (!username || !password || !email) {
     return res
       .status(400)
@@ -82,26 +135,28 @@ app.post("/signup", async (req, res) => {
   }
 
   try {
-    //check if user already exists
+    // Check if user already exists
     const existingUser = await User.findOne({ username });
     if (existingUser) {
       return res.status(400).json({ message: "Username already exists." });
     }
+
     const existingEmail = await User.findOne({ email });
     if (existingEmail) {
       return res.status(400).json({ message: "Email already exists." });
     }
 
-    // Hash password before saving
+    // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
+    // Create new user
     const newUser = new User({
       username,
       password: hashedPassword,
       email,
     });
-    //save user to database
+
     await newUser.save();
     res.status(201).json({ message: "User registered successfully!" });
   } catch (error) {
@@ -109,7 +164,7 @@ app.post("/signup", async (req, res) => {
   }
 });
 
-//login user
+// Login user
 app.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
@@ -132,12 +187,29 @@ app.post("/login", async (req, res) => {
       return res.status(401).json({ message: "Invalid email or password." });
     }
 
+    // Generate JWT token
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+      expiresIn: "1h",
+    });
+
+    // Set token in cookie
+    res.cookie("token", token, {
+      httpOnly: true,
+      sameSite: "strict",
+      maxAge: 3600000, // 1 hour
+    });
+
     res.status(200).json({ message: "Login successful!" });
   } catch (error) {
     res.status(500).json({ message: "Error logging in.", error });
   }
 });
-//route to get the dashboard for the user
+
+// Logout user
+app.post("/logout", (req, res) => {
+  res.clearCookie("token");
+  res.status(200).json({ message: "Logged out successfully" });
+});
 
 // Start the server
 app.listen(process.env.PORT, () => {
