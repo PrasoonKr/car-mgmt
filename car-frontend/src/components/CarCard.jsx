@@ -9,7 +9,7 @@ const CarCard = ({ car }) => {
     if (text.length <= maxLength) return text;
     return text.slice(0, maxLength) + '...';
   };
-
+//navigate to car details page when card is clicked
   return (
     <div 
       onClick={() => navigate(`/car-details/${car._id}`)}
