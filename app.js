@@ -74,19 +74,38 @@ app.post("/api/cars", authenticateToken, async (req, res) => {
     const newCar = new Car({
       title,
       description,
-      images:[photoUrl],
+      images: [photoUrl],
       tags,
       user: req.user.id,
     });
     await newCar.save();
-    res.status(201).json({ message: "Car saved successfully", carData: newCar });
+    res
+      .status(201)
+      .json({ message: "Car saved successfully", carData: newCar });
   } catch (error) {
     res
       .status(500)
       .json({ message: "Error saving car details", error: error.message });
   }
 });
-
+//get car by ID
+app.get("/api/cars/:id", authenticateToken, async (req, res) => {
+  try {
+    const car = await Car.findOne({ _id: req.params.id, user: req.user.id });
+    if (!car) {
+      return res.status(404).json({ message: "Car not found", carData: car });
+    }
+    res.status(200).json({
+      message: "Car found successfully",
+      car: updatedCar,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Error updating car details",
+      error: error.message,
+    });
+  }
+});
 // Update car details by ID
 app.put("/api/cars/:id", authenticateToken, async (req, res) => {
   try {
