@@ -90,7 +90,7 @@ app.post("/api/cars", authenticateToken, async (req, res) => {
 });
 //get car by ID
 app.get("/api/cars/:id", authenticateToken, async (req, res) => {
-  try {
+  try {   
     const car = await Car.findOne({ _id: req.params.id, user: req.user.id });
     if (!car) {
       return res.status(404).json({ message: "Car not found", carData: car });
